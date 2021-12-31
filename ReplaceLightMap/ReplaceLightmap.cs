@@ -50,19 +50,49 @@ public class ReplaceLightmap : EditorWindow
     {
         lightmapData = LightmapSettings.lightmaps[meshRenderer.lightmapIndex];
     }
-
-    public void SetTexReable(Texture2D texture2D, bool value)
+    public static void SetTexReable(Texture2D tex, bool sRGB = true, bool nearSize = false)
     {
-        TextureImporter ti = TextureImporter.GetAtPath(AssetDatabase.GetAssetPath(texture2D)) as TextureImporter;
-        ti.isReadable = value;
-        ti.SaveAndReimport();
+        TextureImportSetting.enabled = false;
+        TextureImporter ti = TextureImporter.GetAtPath(AssetDatabase.GetAssetPath(tex)) as TextureImporter;
+        if (ti != null)
+        {
+            var setting = ti.GetPlatformTextureSettings("Standalone");
+            if (ti.isReadable && ti.sRGBTexture == sRGB && setting.format == TextureImporterFormat.RGBA32) return;
+            setting.overridden = true;
+            setting.format = TextureImporterFormat.RGBA32;
+            ti.textureType = TextureImporterType.Default;
+            ti.sRGBTexture = sRGB;
+            ti.SetPlatformTextureSettings(setting);
+            ti.isReadable = true;
+            if (nearSize)
+            {
+                ti.npotScale = TextureImporterNPOTScale.None;
+            }
+            ti.SaveAndReimport();
+        }
+    }
+
+    public static void SetTexNoReable(Texture2D tex)
+    {
+        TextureImportSetting.enabled = true;
+        TextureImporter ti = TextureImporter.GetAtPath(AssetDatabase.GetAssetPath(tex)) as TextureImporter;
+        if (ti != null)
+        {
+            var setting = ti.GetPlatformTextureSettings("Standalone");
+            setting.overridden = true;
+            ti.SetPlatformTextureSettings(setting);
+            ti.isReadable = false;
+            ti.SaveAndReimport();
+        }
     }
 
     public void LightMapReplace()
     {
         Init();
+        SetTexReable(lightmapData.lightmapColor, true);
         lightmapData.lightmapColor = newMap;
         LightmapSettings.lightmaps[meshRenderer.lightmapIndex] = lightmapData;
+        SetTexNoReable(lightmapData.lightmapColor);
     }
     public void TexelReplace()
     {
@@ -77,43 +107,36 @@ public class ReplaceLightmap : EditorWindow
         Vector2 wh = new Vector2(lightmapData.lightmapColor.width, lightmapData.lightmapColor.height);
         Vector4 lightMapScaleOffset = new Vector4(meshRenderer.lightmapScaleOffset.x, meshRenderer.lightmapScaleOffset.y, meshRenderer.lightmapScaleOffset.z, meshRenderer.lightmapScaleOffset.w);
 
-        Texture2D newLightMap = new Texture2D((int)wh.x, (int)wh.y);
-
+        Texture2D newLightMap = new Texture2D((int)wh.x, (int)wh.y, TextureFormat.RGBA32, true);
         Color[] colors = lightmapData.lightmapColor.GetPixels();
+        SetTexReable(newLightMap, true);
+        
+        //for (int i = 0; i < colors.Length; i++)
+        //{
+        //    //Debug.Log(colors[i]);
 
-        for (int i = 0; i < colors.Length; i++)
-        {
-            //Debug.Log(colors[i]);
-
-            colors[i] = DecodeRGBM(colors[i]);
-            colors[i] = EncodeRGBM(new Vector3(colors[i].r, colors[i].g, colors[i].b));
-        }
+        //    colors[i] = DecodeRGBM(colors[i]);
+        //    //colors[i] = DecodeHDR(colors[i], new Vector4(1, 1, 0, 0));
+        //    //colors[i] = UnpackLightmapRGBM(colors[i], new Vector4(1, 1, 0, 0));
+        //    //colors[i] = EncodeRGBM(new Vector3(colors[i].r, colors[i].g, colors[i].b));
+        //}
         newLightMap.SetPixels(colors);
-        //Debug.Log(lightMapScaleOffset.z * wh.x + "  " + lightMapScaleOffset.x * wh.x);
-        //Debug.Log(lightMapScaleOffset.w * wh.y + "  " + lightMapScaleOffset.y * wh.y);
+
 
         for (float i = lightMapScaleOffset.z * wh.x; i < lightMapScaleOffset.x * wh.x; i++)
         {
             for (float j = lightMapScaleOffset.w * wh.y; j < lightMapScaleOffset.y * wh.y; j++)
             {
                 Color color = modelMap.GetPixelBilinear(i / (lightMapScaleOffset.x * wh.x), j / (lightMapScaleOffset.y * wh.y));
-                //color = EncodeRGBM(new Vector3(color.r, color.g, color.b));
                 newLightMap.SetPixel((int)i, (int)j, color);
             }
         }
-
         File.WriteAllBytes(directoryPath + "/" + fileName + "copy" + type, newLightMap.EncodeToTGA());
-        SetTexReable(lightmapData.lightmapColor, false);
-        SetTexReable(modelMap, false);
-
-        
-        
-
+        SetTexNoReable(lightmapData.lightmapColor);
+        SetTexNoReable(newLightMap);
+        SetTexNoReable(modelMap);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        TextureImporter ti = TextureImporter.GetAtPath(directoryPath + "/" + fileName + "copy" + type) as TextureImporter;
-        ti.textureType = TextureImporterType.Lightmap;
-        ti.SaveAndReimport();
     }
 
     static float kRGBMRange = 8.0f;
@@ -129,10 +152,6 @@ public class ReplaceLightmap : EditorWindow
     {
         return new Vector4(rgbm.x * rgbm.w * kRGBMRange, rgbm.y * rgbm.w * kRGBMRange, rgbm.z * rgbm.w * kRGBMRange, rgbm.w);
     }
-    //public Vector4 DecodeRGBM(Vector4 rgbm)
-    //{
-    //    return new Vector4(rgbm.x * rgbm.w * 8, rgbm.y * rgbm.w * 8, rgbm.z * rgbm.w * 8, rgbm.w);
-    //}
 
     public Vector4 EncodeHDR(Vector4 rgba)
     {
@@ -154,24 +173,19 @@ public class ReplaceLightmap : EditorWindow
         return ouput;
     }
 
-    public Vector4 DecodeHDR(Vector4 rgba)
+    Vector4 DecodeHDR(Color rgbmInput, Vector4 decodeInstructions)
     {
-        Vector4 ouput = rgba;
-        if (rgba[3] == 0)                                           // 指数位是0, rgb都是0
-        {
-            ouput[0] = 0.0f;
-            ouput[1] = 0.0f;
-            ouput[2] = 0.0f;
-        }
-        else
-        {
-            int E = (int)rgba[3] - 128 - 8;                   // 指数位的值
-            double P = Math.Pow(2.0, E);                         // 2的E次幂的结果
-            ouput[0] = (float)((double)rgba[0] / P);                  // 计算三个通道的值
-            ouput[1] = (float)((double)rgba[1] / P);
-            ouput[2] = (float)((double)rgba[2] / P);
-        }
-        return ouput;
+        float alpha = (float)(decodeInstructions.w * (rgbmInput.a - 1.0) + 1.0);
+        return new Vector4(rgbmInput.r * (float)(Math.Pow(alpha, decodeInstructions.y) * decodeInstructions.x)
+            , rgbmInput.g * (float)(Math.Pow(alpha, decodeInstructions.y) * decodeInstructions.x)
+            , rgbmInput.b * (float)(Math.Pow(alpha, decodeInstructions.y) * decodeInstructions.x), rgbmInput.a);
     }
 
+    Vector4 UnpackLightmapRGBM(Color rgbmInput, Vector4 decodeInstructions)
+    {
+        return new Vector4(rgbmInput.r * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x)
+            , rgbmInput.g * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x)
+            , rgbmInput.b * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x), rgbmInput.a) ;
+
+    }
 }
