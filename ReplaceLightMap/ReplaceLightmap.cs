@@ -186,6 +186,5 @@ public class ReplaceLightmap : EditorWindow
         return new Vector4(rgbmInput.r * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x)
             , rgbmInput.g * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x)
             , rgbmInput.b * (float)(Math.Pow(rgbmInput.a, decodeInstructions.y) * decodeInstructions.x), rgbmInput.a) ;
-
     }
 }
